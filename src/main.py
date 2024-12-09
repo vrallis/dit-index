@@ -41,14 +41,7 @@ def extract_id_from_link(link):
     match = re.search(r"id=(\d+)", link)
     return int(match.group(1)) if match else None
 
-def ensure_directory_exists(filepath):
-    directory = os.path.dirname(filepath)
-    if not os.path.exists(directory):
-        os.makedirs(directory)
-
-import os
-
-def ensure_directory_exists(filepath):
+def check_directory(filepath):
     """Ensure the directory for the given filepath exists."""
     directory = os.path.dirname(filepath)
     if not os.path.exists(directory):
@@ -57,7 +50,7 @@ def ensure_directory_exists(filepath):
 def fetch_new_articles(latest_id_file):
     """Fetch only new articles based on the global latest ID."""
     # Ensure the directory exists
-    ensure_directory_exists(latest_id_file)
+    check_directory(latest_id_file)
 
     # Load the latest global ID
     try:
@@ -126,7 +119,7 @@ def fetch_new_articles(latest_id_file):
     return new_articles
 
 
-def update_json_with_new_articles(existing_file, output_file, latest_id_file):
+def update_json(existing_file, output_file, latest_id_file):
     """Detect and add new articles to the JSON."""
     try:
         # load existing json data
@@ -148,7 +141,7 @@ def update_json_with_new_articles(existing_file, output_file, latest_id_file):
 
     print(f"Updated JSON saved to {output_file}")
 
-def upload_to_meilisearch(json_file, meilisearch_url, index_name):
+def update_meilisearch(json_file, meilisearch_url, index_name):
     """Upload updated articles to Meilisearch."""
     with open(json_file, "r", encoding="utf-8") as f:
         articles = json.load(f)
@@ -170,7 +163,7 @@ output_file = "./json_dump/news_data.json"
 latest_id_file = "./json_dump/latest_id.txt"
 
 # update JSON with new articles
-update_json_with_new_articles(existing_file, output_file, latest_id_file)
+update_json(existing_file, output_file, latest_id_file)
 
 # upload the updated JSON to Meilisearch
-upload_to_meilisearch(output_file, MEILISEARCH_URL, INDEX_NAME)
+update_meilisearch(output_file, MEILISEARCH_URL, INDEX_NAME)
