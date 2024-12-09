@@ -1,15 +1,15 @@
 import requests
-import os
 from bs4 import BeautifulSoup
 import json
+import re
 
-# Base URL
+# base url
 BASE_URL = "https://www.dit.uoi.gr/"
 
-# article fetch url
+# fetch url
 GET_ARTICLES_URL = "https://www.dit.uoi.gr/getarticles.php"
 
-# all the categories
+# categories with form data
 CATEGORIES = {
     "Διαλεξη": "category=Διαλεξη",
     "Εργαστηριο": "category=Εργαστηριο",
@@ -22,7 +22,7 @@ CATEGORIES = {
     "Γραμματειας / Τμημα, Πρωτοετεις": "category=Γραμματειας / Τμημα, Πρωτοετεις"
 }
 
-# simulate browser headers
+# manipulate browser headers
 HEADERS = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Safari/537.36",
     "Accept": "*/*",
@@ -32,16 +32,30 @@ HEADERS = {
     "Referer": "https://www.dit.uoi.gr/articles.php"
 }
 
-def fetch_articles():
-    """News parser"""
+def extract_id_from_link(link):
+    """Extract the ID from the link."""
+    match = re.search(r"id=(\d+)", link)
+    return int(match.group(1)) if match else None
+
+def fetch_new_articles(latest_id_file):
+    """Fetch only new articles based on the global latest ID."""
+    # load latest ID
+    try:
+        with open(latest_id_file, "r", encoding="utf-8") as f:
+            latest_id = int(f.read().strip())
+    except FileNotFoundError:
+        print(f"{latest_id_file} not found. Starting from the begginning.")
+        latest_id = 0
+
     session = requests.Session()
     session.headers.update(HEADERS)
-    all_articles = {}
+    new_articles = []
+    max_id = latest_id
 
     for category_name, category_value in CATEGORIES.items():
-        print(f"Fetching news for category: {category_name}")
+        print(f"Fetching new articles for category: {category_name}")
         try:
-            # send post request
+            # post request to get articles
             response = session.post(GET_ARTICLES_URL, data={"category": category_value.split("=")[1]})
             print(f"Response Status Code: {response.status_code}")
 
@@ -49,55 +63,75 @@ def fetch_articles():
                 print(f"Failed to fetch category: {category_name}")
                 continue
 
-            # Parse the response HTML
+            # parse response html
             soup = BeautifulSoup(response.text, "lxml")
 
-            # Locate the table containing the articles
+            # locate table with news articles
             table = soup.find("table", {"class": "table table-striped"})
             if not table:
                 print(f"No table found for category: {category_name}")
                 continue
 
-            category_articles = []
-
-            # Extract articles from table rows
+            # extract only the articles from the table
             for row in table.find_all("tr"):
                 cols = row.find_all("td")
-                if len(cols) == 2:  # only scrape news rows
+                if len(cols) == 2:
                     link_tag = cols[0].find("a")
                     if link_tag:
                         title = link_tag.text.strip()
-                        link = BASE_URL + link_tag["href"]  # add base url to json
-                        date = cols[1].text.strip().strip("()")  # Clean up date data
-                        category_articles.append({
+                        link = BASE_URL + link_tag["href"]
+                        article_id = extract_id_from_link(link)
+                        date = cols[1].text.strip().strip("()")
+
+                        # stop fetching if id has been seen from previous fetch
+                        # this makes the proccess faster and ligter for the server
+                        if article_id <= latest_id:
+                            break
+
+                        new_articles.append({
+                            "id": article_id,
                             "title": title,
                             "link": link,
-                            "date": date
+                            "date": date,
+                            "category": category_name
                         })
-
-            all_articles[category_name] = category_articles
+                        max_id = max(max_id, article_id)
 
         except Exception as e:
             print(f"Error fetching category {category_name}: {e}")
 
-    return all_articles
+    # update latest id file
+    with open(latest_id_file, "w", encoding="utf-8") as f:
+        f.write(str(max_id))
 
+    return new_articles
 
+def update_json_with_new_articles(existing_file, output_file, latest_id_file):
+    """Detect and add new articles to the JSON."""
+    try:
+        # load existing json data
+        with open(existing_file, "r", encoding="utf-8") as f:
+            existing_data = json.load(f)
+    except FileNotFoundError:
+        print(f"{existing_file} not found. Creating a new one.")
+        existing_data = []
 
-##############
-#    MAIN    #
-##############
+    # fetch new articles
+    new_articles = fetch_new_articles(latest_id_file)
 
-output_dir = "./json_dump"
-os.makedirs(output_dir, exist_ok=True)
+    # append new articles to existing data
+    existing_data.extend(new_articles)
 
-output_file = os.path.join(output_dir, "news_data.json")
+    # save updated json
+    with open(output_file, "w", encoding="utf-8") as f:
+        json.dump(existing_data, f, ensure_ascii=False, indent=4)
 
-articles_by_category = fetch_articles()
+    print(f"Updated JSON saved to {output_file}")
 
-# Save to JSON
-with open(output_file, "w", encoding="utf-8") as f:
-    json.dump(articles_by_category, f, ensure_ascii=False, indent=4)
+# paths
+existing_file = "./json_dump/news_data.json"
+output_file = "./json_dump/news_data.json"
+latest_id_file = "./json_dump/latest_id.txt"
 
-print(f"News articles saved to {output_file}")
-
+# update JSON with new articles
+update_json_with_new_articles(existing_file, output_file, latest_id_file)
