@@ -2,12 +2,16 @@ import requests
 from bs4 import BeautifulSoup
 import json
 import re
+import os
 
 # base url
 BASE_URL = "https://www.dit.uoi.gr/"
 
 # fetch url
 GET_ARTICLES_URL = "https://www.dit.uoi.gr/getarticles.php"
+
+MEILISEARCH_URL = "http://localhost:7700"
+INDEX_NAME = "news"
 
 # categories with form data
 CATEGORIES = {
@@ -37,14 +41,30 @@ def extract_id_from_link(link):
     match = re.search(r"id=(\d+)", link)
     return int(match.group(1)) if match else None
 
+def ensure_directory_exists(filepath):
+    directory = os.path.dirname(filepath)
+    if not os.path.exists(directory):
+        os.makedirs(directory)
+
+import os
+
+def ensure_directory_exists(filepath):
+    """Ensure the directory for the given filepath exists."""
+    directory = os.path.dirname(filepath)
+    if not os.path.exists(directory):
+        os.makedirs(directory)
+
 def fetch_new_articles(latest_id_file):
     """Fetch only new articles based on the global latest ID."""
-    # load latest ID
+    # Ensure the directory exists
+    ensure_directory_exists(latest_id_file)
+
+    # Load the latest global ID
     try:
         with open(latest_id_file, "r", encoding="utf-8") as f:
             latest_id = int(f.read().strip())
     except FileNotFoundError:
-        print(f"{latest_id_file} not found. Starting from the begginning.")
+        print(f"{latest_id_file} not found. Starting fresh.")
         latest_id = 0
 
     session = requests.Session()
@@ -55,7 +75,7 @@ def fetch_new_articles(latest_id_file):
     for category_name, category_value in CATEGORIES.items():
         print(f"Fetching new articles for category: {category_name}")
         try:
-            # post request to get articles
+            # post
             response = session.post(GET_ARTICLES_URL, data={"category": category_value.split("=")[1]})
             print(f"Response Status Code: {response.status_code}")
 
@@ -63,16 +83,16 @@ def fetch_new_articles(latest_id_file):
                 print(f"Failed to fetch category: {category_name}")
                 continue
 
-            # parse response html
+            # Parse html response
             soup = BeautifulSoup(response.text, "lxml")
 
-            # locate table with news articles
+            # locate content table
             table = soup.find("table", {"class": "table table-striped"})
             if not table:
                 print(f"No table found for category: {category_name}")
                 continue
 
-            # extract only the articles from the table
+            # extract news articles
             for row in table.find_all("tr"):
                 cols = row.find_all("td")
                 if len(cols) == 2:
@@ -83,8 +103,7 @@ def fetch_new_articles(latest_id_file):
                         article_id = extract_id_from_link(link)
                         date = cols[1].text.strip().strip("()")
 
-                        # stop fetching if id has been seen from previous fetch
-                        # this makes the proccess faster and ligter for the server
+                        # stop fetching
                         if article_id <= latest_id:
                             break
 
@@ -100,11 +119,12 @@ def fetch_new_articles(latest_id_file):
         except Exception as e:
             print(f"Error fetching category {category_name}: {e}")
 
-    # update latest id file
+    # update latest id
     with open(latest_id_file, "w", encoding="utf-8") as f:
         f.write(str(max_id))
 
     return new_articles
+
 
 def update_json_with_new_articles(existing_file, output_file, latest_id_file):
     """Detect and add new articles to the JSON."""
@@ -128,6 +148,22 @@ def update_json_with_new_articles(existing_file, output_file, latest_id_file):
 
     print(f"Updated JSON saved to {output_file}")
 
+def upload_to_meilisearch(json_file, meilisearch_url, index_name):
+    """Upload updated articles to Meilisearch."""
+    with open(json_file, "r", encoding="utf-8") as f:
+        articles = json.load(f)
+
+    response = requests.post(
+        f"{meilisearch_url}/indexes/{index_name}/documents",
+        headers={"Content-Type": "application/json"},
+        json=articles
+    )
+
+    if response.status_code == 202:
+        print(f"Successfully uploaded to Meilisearch. Task UID: {response.json().get('taskUid')}")
+    else:
+        print(f"Failed to upload to Meilisearch: {response.text}")
+
 # paths
 existing_file = "./json_dump/news_data.json"
 output_file = "./json_dump/news_data.json"
@@ -135,3 +171,6 @@ latest_id_file = "./json_dump/latest_id.txt"
 
 # update JSON with new articles
 update_json_with_new_articles(existing_file, output_file, latest_id_file)
+
+# upload the updated JSON to Meilisearch
+upload_to_meilisearch(output_file, MEILISEARCH_URL, INDEX_NAME)
