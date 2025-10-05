@@ -210,3 +210,5 @@ pyrightconfig.json
 src/json_dump/
 /json_dump/
 # End of https://www.toptal.com/developers/gitignore/api/python,git,visualstudiocode
+
+database
